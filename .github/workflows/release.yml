@@ -41,16 +41,24 @@ jobs:
         shell: pwsh
         run: |
           $version = ""
+          $isPrerelease = "false"
 
           if ($env:GITHUB_REF -like "refs/tags/*") {
             $version = $env:GITHUB_REF_NAME
+            if ($version -match '(?i)(^|[-._])rc([-.]?\d+)?$') {
+              $isPrerelease = "true"
+            }
           } elseif ("${{ github.event.inputs.version }}") {
             $version = "${{ github.event.inputs.version }}"
+            if ($version -match '(?i)(^|[-._])rc([-.]?\d+)?$') {
+              $isPrerelease = "true"
+            }
           } else {
             $version = "dev-$($env:GITHUB_SHA.Substring(0, 7))"
           }
 
           "KLR_BUILD_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "KLR_IS_PRERELEASE=$isPrerelease" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build plugin
         shell: cmd
@@ -67,7 +75,7 @@ jobs:
 
           Copy-Item "build\AviUtl2KaraokeLyricRenderer.auf2" $stageDir
           Copy-Item "README.md" $stageDir
-          Copy-Item "docs\Usage.md" $stageDir
+          Copy-Item "LICENSE" $stageDir
 
           Compress-Archive -Path (Join-Path $stageDir "*") -DestinationPath "build\aviutl2-karaoke-lyric-renderer.zip" -Force
 
@@ -85,6 +93,7 @@ jobs:
         run: |
           $tag = $env:GITHUB_REF_NAME
           $asset = "build\aviutl2-karaoke-lyric-renderer.zip"
+          $isPrerelease = $env:KLR_IS_PRERELEASE -eq "true"
 
           gh --version
 
@@ -92,5 +101,10 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $asset --clobber
           } else {
-            gh release create $tag $asset --title $tag --notes "Automated release for $tag."
+            $args = @("release", "create", $tag, $asset, "--title", $tag, "--notes", "Automated release for $tag.")
+            if ($isPrerelease) {
+              $args += "--prerelease"
+            }
+
+            gh @args
           }
