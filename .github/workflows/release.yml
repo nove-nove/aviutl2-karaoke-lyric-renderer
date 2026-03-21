@@ -1,0 +1,96 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 埋め込むバージョン文字列
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Locate Visual Studio Developer Command Prompt
+        shell: pwsh
+        run: |
+          $vsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vsWhere)) {
+            throw "vswhere.exe was not found."
+          }
+
+          $vsDevCmd = & $vsWhere -latest -products * -find Common7\Tools\VsDevCmd.bat
+          if (-not $vsDevCmd) {
+            throw "VsDevCmd.bat was not found."
+          }
+
+          "VSDEVCMD=$vsDevCmd" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Determine plugin version
+        shell: pwsh
+        run: |
+          $version = ""
+
+          if ($env:GITHUB_REF -like "refs/tags/*") {
+            $version = $env:GITHUB_REF_NAME
+          } elseif ("${{ github.event.inputs.version }}") {
+            $version = "${{ github.event.inputs.version }}"
+          } else {
+            $version = "dev-$($env:GITHUB_SHA.Substring(0, 7))"
+          }
+
+          "KLR_BUILD_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build plugin
+        shell: cmd
+        run: |
+          call "%VSDEVCMD%" -host_arch=x64 -arch=x64
+          call scripts\build.bat "%KLR_BUILD_VERSION%"
+
+      - name: Create release package
+        shell: pwsh
+        run: |
+          $stageDir = Join-Path $env:RUNNER_TEMP "package"
+          Remove-Item -Recurse -Force $stageDir -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stageDir | Out-Null
+
+          Copy-Item "build\AviUtl2KaraokeLyricRenderer.auf2" $stageDir
+          Copy-Item "README.md" $stageDir
+          Copy-Item "docs\Usage.md" $stageDir
+
+          Compress-Archive -Path (Join-Path $stageDir "*") -DestinationPath "build\aviutl2-karaoke-lyric-renderer.zip" -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aviutl2-karaoke-lyric-renderer
+          path: build/aviutl2-karaoke-lyric-renderer.zip
+
+      - name: Publish GitHub Release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $asset = "build\aviutl2-karaoke-lyric-renderer.zip"
+
+          gh --version
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $asset --clobber
+          } else {
+            gh release create $tag $asset --title $tag --notes "Automated release for $tag."
+          }

@@ -1,0 +1,10 @@
+/build/
+/*.auf2
+/*.exp
+/*.lib
+/*.obj
+/*.pdb
+/.vs/
+*.user
+*.VC.db
+*.opendb
