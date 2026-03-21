@@ -33,6 +33,8 @@ scripts\build.bat v0.1.0
 - `v` で始まるタグを push すると、Release 用ワークフローが動作します。
 - ワークフローは Windows 上でビルドし、`aviutl2-karaoke-lyric-renderer.zip` を作成して GitHub Release に添付します。
 - `workflow_dispatch` から手動実行した場合は、Release を作らずに成果物を取得できます。
+- タグ名に `rc` を含む場合は GitHub の pre-release として作成されます。
+- `rc` を含まない `v` タグは通常の安定版 Release として作成されます。
 - タグ push 時はタグ名がプラグイン情報のバージョン文字列として埋め込まれます。
 - `workflow_dispatch` では任意のバージョン文字列を指定できます。未指定時は `dev-<short sha>` になります。
 
