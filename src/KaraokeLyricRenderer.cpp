@@ -48,7 +48,7 @@ FILTER_ITEM_SELECT::ITEM kOutlineModeItems[] = {
 FILTER_ITEM_FILE kLyricsFile(
 	L"歌詞ファイル",
 	L"",
-	L"タイムタグ付き歌詞 (*.txt;*.kra)\0*.txt;*.kra\0すべてのファイル (*.*)\0*.*\0");
+	L"タイムタグ付き歌詞 (*.txt;*.kra;*.lrc)\0*.txt;*.kra;*.lrc\0すべてのファイル (*.*)\0*.*\0");
 FILTER_ITEM_SELECT::ITEM kEmptyFontItems[] = {
 	{ L"MS UI Gothic", 0 },
 	{ nullptr, 0 },
@@ -486,20 +486,40 @@ int ComputeActiveClipWidth(const LayoutLine& line, int current_frame) {
 }
 
 // 本文の進行幅から対応するルビの進行幅を求める。
-float ComputeRubyActiveWidth(const LayoutRubySegment& segment, int line_clip_width, TextMeasurer* text_measurer, const FontStyleSettings& ruby_font) {
+float ComputeRubyActiveWidth(const LayoutRubySegment& segment, int current_frame, int line_clip_width) {
+	if (!segment.timing_segments.empty()) {
+		if (current_frame <= segment.timing_segments.front().start_frame) {
+			return 0.0f;
+		}
+
+		for (const auto& timing : segment.timing_segments) {
+			if (current_frame >= timing.end_frame) {
+				continue;
+			}
+
+			if (current_frame <= timing.start_frame) {
+				return static_cast<float>(timing.clip_start);
+			}
+
+			const auto ratio = static_cast<double>(current_frame - timing.start_frame) / static_cast<double>(timing.end_frame - timing.start_frame);
+			return static_cast<float>(timing.clip_start + ((timing.clip_end - timing.clip_start) * ratio));
+		}
+
+		return static_cast<float>(segment.timing_segments.back().clip_end);
+	}
+
 	const auto base_width = std::max(0.0f, segment.base_end - segment.base_start);
 	if (base_width <= 0.0f) {
 		return 0.0f;
 	}
 
-	const auto ruby_width = static_cast<float>(text_measurer->MeasureWidth(ruby_font, segment.text));
-	if (ruby_width <= 0.0f) {
+	if (segment.width <= 0.0f) {
 		return 0.0f;
 	}
 
 	const auto consumed_base = std::clamp(static_cast<float>(line_clip_width) - segment.base_start, 0.0f, base_width);
 	const auto ratio = consumed_base / base_width;
-	return ruby_width * ratio;
+	return segment.width * ratio;
 }
 
 // GDI+で描いたBGRAバッファをAviUtl2用RGBAへ詰め替える。
@@ -596,7 +616,7 @@ bool RenderLyricsFrame(const FILTER_PROC_VIDEO* video, const CachedLayout& cache
 			const auto ruby_padding = ComputeOutlineWidth(settings.ruby_font) * 0.5f;
 			for (const auto& segment : line.ruby->segments) {
 				const auto ruby_x = draw_x + segment.offset_x;
-				const auto ruby_clip_width = ComputeRubyActiveWidth(segment, clip_width, &text_measurer, settings.ruby_font);
+				const auto ruby_clip_width = ComputeRubyActiveWidth(segment, current_frame, clip_width);
 				const auto ruby_clip_x = ruby_x + ruby_clip_width;
 
 				if (ruby_clip_x < width + ruby_padding) {

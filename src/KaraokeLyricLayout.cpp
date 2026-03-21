@@ -766,12 +766,75 @@ bool IsIsolated(const ProvisionalLayoutLine& line, const std::vector<Provisional
 }
 
 // 本文の文字位置を基準にルビの描画位置を組み立てる。
+std::vector<LayoutSyllable> BuildRubyTimingLayouts(
+	const RubySpan& ruby_span,
+	const std::vector<TextElementTiming>& element_timings,
+	size_t safe_start,
+	size_t safe_end,
+	const std::vector<TextElementBounds>& ruby_bounds,
+	const ProjectSettings& settings) {
+	std::vector<LayoutSyllable> result;
+	if (ruby_span.ruby_timing_segments.empty() || ruby_bounds.empty() || safe_start >= element_timings.size() || safe_end >= element_timings.size()) {
+		return result;
+	}
+
+	const auto base_start_time_ms = element_timings[safe_start].start_time_ms;
+	const auto base_end_time_ms = element_timings[safe_end].end_time_ms;
+	if (base_end_time_ms <= base_start_time_ms) {
+		return result;
+	}
+
+	int clip_start = 0;
+	int element_cursor = 0;
+	for (size_t index = 0; index < ruby_span.ruby_timing_segments.size(); ++index) {
+		const auto& segment = ruby_span.ruby_timing_segments[index];
+		const auto element_length = CountTextElements(segment.text);
+		if (element_length <= 0 || element_cursor >= static_cast<int>(ruby_bounds.size())) {
+			continue;
+		}
+
+		const auto start_time_ms = base_start_time_ms + segment.start_time_ms;
+		const auto end_time_ms = segment.end_time_ms >= 0
+			? base_start_time_ms + segment.end_time_ms
+			: base_end_time_ms;
+		if (end_time_ms <= start_time_ms || start_time_ms < base_start_time_ms || end_time_ms > base_end_time_ms) {
+			result.clear();
+			return result;
+		}
+
+		const auto end_index = std::min(static_cast<int>(ruby_bounds.size()) - 1, element_cursor + element_length - 1);
+		const auto clip_end = static_cast<int>(std::lround(ruby_bounds[end_index].end));
+		result.push_back(LayoutSyllable{
+			static_cast<int>(index),
+			segment.text,
+			StartFrameFromMilliseconds(start_time_ms, settings),
+			EndFrameFromMilliseconds(end_time_ms, settings),
+			clip_start,
+			clip_end });
+		clip_start = clip_end;
+		element_cursor = end_index + 1;
+	}
+
+	if (result.empty()) {
+		return result;
+	}
+
+	const auto last_clip_end = result.back().clip_end;
+	const auto expected_clip_end = static_cast<int>(std::lround(ruby_bounds.back().end));
+	if (last_clip_end != expected_clip_end) {
+		result.clear();
+	}
+
+	return result;
+}
+
 std::optional<LayoutRuby> BuildRubyLayout(const ProvisionalLayoutLine& line, const ProjectSettings& settings, TextMeasurer* text_measurer) {
 	if (line.source.ruby_spans.empty()) {
 		return std::nullopt;
 	}
 
 	LayoutRuby ruby;
+	const auto element_timings = BuildTextElementTimings(line.source.syllables);
 	for (const auto& ruby_span : line.source.ruby_spans) {
 		size_t safe_start = 0;
 		size_t safe_end = 0;
@@ -782,12 +845,14 @@ std::optional<LayoutRuby> BuildRubyLayout(const ProvisionalLayoutLine& line, con
 		const auto start = line.text_element_bounds[safe_start].start;
 		const auto end = line.text_element_bounds[safe_end].end;
 		const auto ruby_width = static_cast<float>(text_measurer->MeasureWidth(settings.ruby_font, ruby_span.ruby_text));
+		const auto ruby_bounds = BuildTextElementBounds(ruby_span.ruby_text, settings.ruby_font, text_measurer);
+		auto timing_segments = BuildRubyTimingLayouts(ruby_span, element_timings, safe_start, safe_end, ruby_bounds, settings);
 		const auto base_width = end - start;
 		auto offset = start + ((base_width - ruby_width) / 2.0f);
 		if (settings.font.italic && settings.ruby_font.italic) {
 			offset += settings.font.size * kItalicShear;
 		}
-		ruby.segments.push_back(LayoutRubySegment{ ruby_span.ruby_text, offset, start, end });
+		ruby.segments.push_back(LayoutRubySegment{ ruby_span.ruby_text, offset, start, end, ruby_width, std::move(timing_segments) });
 	}
 
 	if (ruby.segments.empty()) {
@@ -828,6 +893,19 @@ std::vector<std::wstring> SplitTextElements(const std::wstring& text) {
 // 文字列内の表示文字要素数を数える。
 int CountTextElements(const std::wstring& text) {
 	return static_cast<int>(SplitTextElements(text).size());
+}
+
+// 音節列から各文字要素の時刻情報を展開する。
+std::vector<TextElementTiming> BuildTextElementTimings(const std::vector<LyricSyllable>& syllables) {
+	std::vector<TextElementTiming> timings;
+	for (const auto& syllable : syllables) {
+		const auto element_count = CountTextElements(syllable.text);
+		for (int index = 0; index < element_count; ++index) {
+			timings.push_back(TextElementTiming{ syllable.start_time_ms, syllable.end_time_ms });
+		}
+	}
+
+	return timings;
 }
 
 // 各文字要素の左右端位置を積み上げ計算する。

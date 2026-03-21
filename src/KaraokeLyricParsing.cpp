@@ -14,6 +14,19 @@ struct ParsedLineTransform {
 	std::vector<RubySpan> ruby_spans;
 };
 
+struct ParsedRubyText {
+	std::wstring visible_text;
+	std::vector<RubyTimingSegment> timing_segments;
+};
+
+struct RubyRule {
+	int sequence = 0;
+	std::wstring base_text;
+	ParsedRubyText ruby;
+	int start_time_ms = 0;
+	int end_time_ms = (((99 * 60) + 59) * 1000) + 990;
+};
+
 // 指定コードページのバイト列をワイド文字列へ変換する。
 std::optional<std::wstring> DecodeToWide(const std::string& text, UINT code_page, DWORD flags) {
 	if (text.empty()) {
@@ -30,6 +43,21 @@ std::optional<std::wstring> DecodeToWide(const std::string& text, UINT code_page
 		return std::nullopt;
 	}
 	return result;
+}
+
+// 文字列前後の空白を除去する。
+std::wstring TrimWhitespace(const std::wstring& text) {
+	size_t start = 0;
+	while (start < text.size() && iswspace(text[start])) {
+		start++;
+	}
+
+	size_t end = text.size();
+	while (end > start && iswspace(text[end - 1])) {
+		end--;
+	}
+
+	return text.substr(start, end - start);
 }
 
 // ASCII 数字かどうかを判定する。
@@ -102,6 +130,80 @@ std::wstring StripTimeTags(const std::wstring& text) {
 	return result;
 }
 
+// 文字列をカンマで分割し、空要素も保持する。
+std::vector<std::wstring> SplitByComma(const std::wstring& text) {
+	std::vector<std::wstring> fields;
+	size_t field_start = 0;
+	while (field_start <= text.size()) {
+		const auto comma_index = text.find(L',', field_start);
+		if (comma_index == std::wstring::npos) {
+			fields.push_back(text.substr(field_start));
+			break;
+		}
+
+		fields.push_back(text.substr(field_start, comma_index - field_start));
+		field_start = comma_index + 1;
+	}
+
+	return fields;
+}
+
+// ルビ文字列に埋め込まれた相対タイムタグを解析する。
+ParsedRubyText ParseRubyText(const std::wstring& text) {
+	ParsedRubyText parsed;
+	parsed.visible_text = StripTimeTags(text);
+
+	int current_start_time_ms = 0;
+	std::wstring current_text;
+	bool has_embedded_timing = false;
+	bool timing_valid = true;
+
+	size_t index = 0;
+	while (index < text.size()) {
+		size_t next_index = 0;
+		int tag_time_ms = 0;
+		if (TryReadTimeTag(text, index, &tag_time_ms, &next_index)) {
+			has_embedded_timing = true;
+			if (!current_text.empty()) {
+				if (tag_time_ms <= current_start_time_ms) {
+					timing_valid = false;
+					break;
+				}
+
+				parsed.timing_segments.push_back(RubyTimingSegment{
+					current_start_time_ms,
+					tag_time_ms,
+					current_text });
+				current_text.clear();
+			}
+			current_start_time_ms = tag_time_ms;
+			index = next_index;
+			continue;
+		}
+
+		current_text.push_back(text[index]);
+		index++;
+	}
+
+	if (!timing_valid) {
+		parsed.timing_segments.clear();
+		return parsed;
+	}
+
+	if (!current_text.empty()) {
+		parsed.timing_segments.push_back(RubyTimingSegment{
+			current_start_time_ms,
+			-1,
+			current_text });
+	}
+
+	if (!has_embedded_timing) {
+		parsed.timing_segments.clear();
+	}
+
+	return parsed;
+}
+
 // text element 単位の範囲から親文字列を取り出す。
 std::wstring GetBaseTextByTextElementRange(const std::wstring& visible_text, int start_index, int base_length) {
 	const auto elements = SplitTextElements(visible_text);
@@ -163,6 +265,71 @@ bool TryParseInteger(const std::wstring& text, size_t* cursor, int* value) {
 	return true;
 }
 
+// フィールド全体をタイムタグとして解釈する。
+bool TryParseTimeTagField(const std::wstring& text, int* milliseconds) {
+	const auto trimmed = TrimWhitespace(text);
+	if (trimmed.empty()) {
+		return false;
+	}
+
+	size_t next_index = 0;
+	if (!TryReadTimeTag(trimmed, 0, milliseconds, &next_index)) {
+		return false;
+	}
+
+	return next_index == trimmed.size();
+}
+
+// @RubyX=... 行を 1 件読み取る。
+bool TryParseRubyRuleLine(const std::wstring& line, RubyRule* rule) {
+	auto trimmed = TrimWhitespace(line);
+	if (trimmed.size() < 7 || trimmed.compare(0, 5, L"@Ruby") != 0) {
+		return false;
+	}
+
+	size_t cursor = 5;
+	int sequence = 0;
+	if (!TryParseInteger(trimmed, &cursor, &sequence) || sequence <= 0) {
+		return false;
+	}
+
+	if (cursor >= trimmed.size() || trimmed[cursor] != L'=') {
+		return false;
+	}
+	cursor++;
+
+	const auto fields = SplitByComma(trimmed.substr(cursor));
+	if (fields.empty() || fields.size() > 4) {
+		return false;
+	}
+
+	RubyRule parsed;
+	parsed.sequence = sequence;
+	parsed.base_text = TrimWhitespace(fields[0]);
+	if (parsed.base_text.empty()) {
+		return false;
+	}
+
+	if (fields.size() >= 2) {
+		parsed.ruby = ParseRubyText(TrimWhitespace(fields[1]));
+	}
+
+	if (fields.size() >= 3 && !TrimWhitespace(fields[2]).empty()) {
+		if (!TryParseTimeTagField(fields[2], &parsed.start_time_ms)) {
+			return false;
+		}
+	}
+
+	if (fields.size() >= 4 && !TrimWhitespace(fields[3]).empty()) {
+		if (!TryParseTimeTagField(fields[3], &parsed.end_time_ms)) {
+			return false;
+		}
+	}
+
+	*rule = parsed;
+	return true;
+}
+
 // 改行コードを 1 パスで LF に正規化する。
 std::wstring NormalizeLineEndings(const std::wstring& text) {
 	std::wstring normalized;
@@ -181,6 +348,138 @@ std::wstring NormalizeLineEndings(const std::wstring& text) {
 	}
 
 	return normalized;
+}
+
+// 定義済みルビ規則を連番順に収集する。
+std::vector<RubyRule> CollectRubyRules(const std::wstring& normalized_text) {
+	std::map<int, RubyRule> indexed_rules;
+
+	size_t line_start = 0;
+	while (line_start <= normalized_text.size()) {
+		const auto line_end = normalized_text.find(L'\n', line_start);
+		const auto raw_line = normalized_text.substr(line_start, line_end == std::wstring::npos ? std::wstring::npos : line_end - line_start);
+		line_start = (line_end == std::wstring::npos) ? normalized_text.size() + 1 : line_end + 1;
+
+		RubyRule rule;
+		if (!TryParseRubyRuleLine(raw_line, &rule)) {
+			continue;
+		}
+
+		indexed_rules[rule.sequence] = rule;
+	}
+
+	std::vector<RubyRule> rules;
+	for (int sequence = 1;; ++sequence) {
+		const auto found = indexed_rules.find(sequence);
+		if (found == indexed_rules.end()) {
+			break;
+		}
+
+		rules.push_back(found->second);
+	}
+
+	return rules;
+}
+
+// 文字要素列の指定位置が親文字列と一致するかを返す。
+bool MatchTextElementsAt(const std::vector<std::wstring>& haystack, size_t index, const std::vector<std::wstring>& needle) {
+	if (needle.empty() || index + needle.size() > haystack.size()) {
+		return false;
+	}
+
+	for (size_t offset = 0; offset < needle.size(); ++offset) {
+		if (haystack[index + offset] != needle[offset]) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+// 文字要素範囲が重なる既存ルビを除去する。
+void RemoveOverlappingRubySpans(std::vector<RubySpan>* spans, int start_index, int base_length) {
+	const auto end_index = start_index + base_length;
+	spans->erase(
+		std::remove_if(spans->begin(), spans->end(), [start_index, end_index](const RubySpan& span) {
+			const auto span_end_index = span.start_index + span.base_length;
+			return start_index < span_end_index && span.start_index < end_index;
+		}),
+		spans->end());
+}
+
+// @Ruby 規則から行単位のルビ span を解決する。
+std::vector<RubySpan> ResolveRubyRulesForLine(
+	const std::wstring& visible_text,
+	const std::vector<LyricSyllable>& syllables,
+	const std::vector<RubyRule>& rules) {
+	std::vector<RubySpan> resolved;
+	const auto line_elements = SplitTextElements(visible_text);
+	const auto element_timings = BuildTextElementTimings(syllables);
+	if (line_elements.empty() || element_timings.size() != line_elements.size()) {
+		return resolved;
+	}
+
+	for (const auto& rule : rules) {
+		const auto base_elements = SplitTextElements(rule.base_text);
+		if (base_elements.empty()) {
+			continue;
+		}
+
+		for (size_t index = 0; index + base_elements.size() <= line_elements.size(); ++index) {
+			if (!MatchTextElementsAt(line_elements, index, base_elements)) {
+				continue;
+			}
+
+			const auto appearance_time_ms = element_timings[index].start_time_ms;
+			if (appearance_time_ms < rule.start_time_ms || appearance_time_ms > rule.end_time_ms) {
+				continue;
+			}
+
+			RemoveOverlappingRubySpans(&resolved, static_cast<int>(index), static_cast<int>(base_elements.size()));
+			if (rule.ruby.visible_text.empty()) {
+				continue;
+			}
+
+			resolved.push_back(RubySpan{
+				static_cast<int>(index),
+				static_cast<int>(base_elements.size()),
+				rule.base_text,
+				rule.ruby.visible_text,
+				rule.ruby.timing_segments });
+		}
+	}
+
+	std::sort(resolved.begin(), resolved.end(), [](const RubySpan& a, const RubySpan& b) {
+		if (a.start_index != b.start_index) {
+			return a.start_index < b.start_index;
+		}
+		return a.base_length < b.base_length;
+	});
+	return resolved;
+}
+
+// 既存の行内ルビをマージし、同一範囲ではこちらを優先する。
+std::vector<RubySpan> MergeExplicitRubySpans(
+	std::vector<RubySpan> resolved,
+	const std::vector<RubySpan>& explicit_spans,
+	const std::wstring& visible_text) {
+	for (auto span : explicit_spans) {
+		span.base_text = GetBaseTextByTextElementRange(visible_text, span.start_index, span.base_length);
+		RemoveOverlappingRubySpans(&resolved, span.start_index, span.base_length);
+		if (span.ruby_text.empty()) {
+			continue;
+		}
+
+		resolved.push_back(std::move(span));
+	}
+
+	std::sort(resolved.begin(), resolved.end(), [](const RubySpan& a, const RubySpan& b) {
+		if (a.start_index != b.start_index) {
+			return a.start_index < b.start_index;
+		}
+		return a.base_length < b.base_length;
+	});
+	return resolved;
 }
 
 // エスケープ付きの引用文字列を読む。
@@ -240,7 +539,8 @@ bool TryParseRubyTag(const std::wstring& block, size_t* cursor, RubySpan* span) 
 	if (!TryParseQuotedString(block, cursor, &ruby_text)) return false;
 	if (!ConsumeLiteral(block, cursor, L")")) return false;
 
-	*span = RubySpan{ start_index, base_length, L"", ruby_text };
+	const auto parsed_ruby = ParseRubyText(ruby_text);
+	*span = RubySpan{ start_index, base_length, L"", parsed_ruby.visible_text, parsed_ruby.timing_segments };
 	return true;
 }
 
@@ -399,11 +699,13 @@ ParsedLineTransform TransformAssRubyLine(const std::wstring& line) {
 		std::wstring ruby_text;
 		std::wstring replacement;
 		if (TryMatchRuby(source_line, index, &consumed_length, &base_text, &ruby_text, &replacement)) {
+			const auto parsed_ruby = ParseRubyText(ruby_text);
 			spans.push_back(RubySpan{
 				CountTextElements(StripTimeTags(visible)),
 				CountTextElements(base_text),
 				base_text,
-				ruby_text });
+				parsed_ruby.visible_text,
+				parsed_ruby.timing_segments });
 			visible += replacement;
 			index += consumed_length;
 			continue;
@@ -479,6 +781,7 @@ std::optional<std::wstring> ReadLyricsFile(const wchar_t* path) {
 LyricsDocument ParseTimedLyricsDocument(const std::wstring& text) {
 	LyricsDocument document;
 	const auto normalized = NormalizeLineEndings(text);
+	const auto ruby_rules = CollectRubyRules(normalized);
 
 	size_t line_start = 0;
 	while (line_start <= normalized.size()) {
@@ -494,6 +797,11 @@ LyricsDocument ParseTimedLyricsDocument(const std::wstring& text) {
 			}
 		}
 		if (!has_non_space) {
+			continue;
+		}
+
+		RubyRule ignored_rule;
+		if (TryParseRubyRuleLine(raw_line, &ignored_rule)) {
 			continue;
 		}
 
@@ -542,12 +850,15 @@ LyricsDocument ParseTimedLyricsDocument(const std::wstring& text) {
 			continue;
 		}
 
+		auto ruby_spans = ResolveRubyRulesForLine(visible_text, syllables, ruby_rules);
+		ruby_spans = MergeExplicitRubySpans(std::move(ruby_spans), transformed.ruby_spans, visible_text);
+
 		document.lines.push_back(LyricLine{
 			syllables.front().start_time_ms,
 			syllables.back().end_time_ms,
 			visible_text,
 			syllables,
-			transformed.ruby_spans,
+			ruby_spans,
 			raw_line });
 	}
 

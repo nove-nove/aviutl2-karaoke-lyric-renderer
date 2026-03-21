@@ -19,12 +19,26 @@ struct LyricSyllable {
 	std::wstring text;
 };
 
+// 文字要素ごとの時刻情報。
+struct TextElementTiming {
+	int start_time_ms = 0;
+	int end_time_ms = 0;
+};
+
+// ルビ内ワイプの相対時刻情報。
+struct RubyTimingSegment {
+	int start_time_ms = 0;
+	int end_time_ms = -1;
+	std::wstring text;
+};
+
 // ベース文字列に対応するルビ情報。
 struct RubySpan {
 	int start_index = 0;
 	int base_length = 0;
 	std::wstring base_text;
 	std::wstring ruby_text;
+	std::vector<RubyTimingSegment> ruby_timing_segments;
 };
 
 // 1行分の歌詞と、その解析結果をまとめたデータ。
@@ -126,6 +140,8 @@ struct LayoutRubySegment {
 	float offset_x = 0.0f;
 	float base_start = 0.0f;
 	float base_end = 0.0f;
+	float width = 0.0f;
+	std::vector<LayoutSyllable> timing_segments;
 };
 
 // 1行分のルビ配置情報。
@@ -186,5 +202,7 @@ LayoutResult BuildLayout(const LyricsDocument& document, const ProjectSettings& 
 int CountTextElements(const std::wstring& text);
 // 結合文字を考慮して文字列を表示単位へ分割する。
 std::vector<std::wstring> SplitTextElements(const std::wstring& text);
+// 音節列から各文字要素の時刻配列を組み立てる。
+std::vector<TextElementTiming> BuildTextElementTimings(const std::vector<LyricSyllable>& syllables);
 // 各文字要素の左右端位置を配列で返す。
 std::vector<TextElementBounds> BuildTextElementBounds(const std::wstring& text, const FontStyleSettings& font, TextMeasurer* text_measurer);

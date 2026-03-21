@@ -1,4 +1,5 @@
 /build/
+/samples/
 /*.auf2
 /*.exp
 /*.lib
