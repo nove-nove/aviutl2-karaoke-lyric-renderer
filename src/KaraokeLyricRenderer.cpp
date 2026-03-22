@@ -565,7 +565,7 @@ bool RenderLyricsFrame(const FILTER_PROC_VIDEO* video, const CachedLayout& cache
 
 	// 未進行色を先に描き、その上から進行済み部分だけをクリップして重ねる。
 	for (const auto& line : cache.layout.lines) {
-		if (current_frame < line.display_start_frame || current_frame > line.display_end_frame) {
+		if (current_frame < line.display_start_frame || current_frame >= line.display_end_frame) {
 			continue;
 		}
 

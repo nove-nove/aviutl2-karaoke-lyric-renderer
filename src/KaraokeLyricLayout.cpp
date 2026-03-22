@@ -206,9 +206,9 @@ struct PendingPageState {
 	ProvisionalLayoutLine TakeNextLine() { return lines[next_line_index++]; }
 };
 
-// 2つの表示区間が重なっているかを判定する。
+// 2つの表示区間 [start, end) が重なっているかを判定する。
 bool IntervalsOverlap(int start_a, int end_a, int start_b, int end_b) {
-	return start_a <= end_b && start_b <= end_a;
+	return start_a < end_b && start_b < end_a;
 }
 
 // 各表示文字要素の描画幅を個別に計測する。
@@ -402,7 +402,7 @@ std::vector<int> AssignLogicalPageIds(const std::vector<TimingLine>& lines, int 
 			line_count_in_page = 0;
 		}
 
-		page_ids[lines[index].index] = page_id;
+		page_ids[index] = page_id;
 		line_count_in_page++;
 	}
 
@@ -862,6 +862,13 @@ std::optional<LayoutRuby> BuildRubyLayout(const ProvisionalLayoutLine& line, con
 	return ruby;
 }
 
+void ShiftSyllableFrames(std::vector<LayoutSyllable>* syllables, int frame_offset) {
+	for (auto& syllable : *syllables) {
+		syllable.start_frame += frame_offset;
+		syllable.end_frame += frame_offset;
+	}
+}
+
 } // namespace
 
 // 文字列を表示上の文字要素単位へ分割する。
@@ -976,25 +983,27 @@ LayoutResult BuildLayout(const LyricsDocument& document, const ProjectSettings& 
 		throw std::runtime_error("MaxVisibleLines must be between 1 and 4.");
 	}
 
+	auto layout_settings = settings;
+	layout_settings.start_frame = 0;
 	TextMeasurer text_measurer;
-	const auto lead_in_frames = MillisecondsToFrameCount(settings.lead_in_ms, settings);
-	const auto hold_frames = MillisecondsToFrameCount(settings.hold_ms, settings);
-	const auto min_gap_frames = MillisecondsToFrameCount(settings.min_gap_ms, settings);
+	const auto lead_in_frames = MillisecondsToFrameCount(layout_settings.lead_in_ms, layout_settings);
+	const auto hold_frames = MillisecondsToFrameCount(layout_settings.hold_ms, layout_settings);
+	const auto min_gap_frames = MillisecondsToFrameCount(layout_settings.min_gap_ms, layout_settings);
 
 	// まず各行の表示区間と文字幅を計算する。
 	std::vector<TimingLine> timing_lines;
 	timing_lines.reserve(document.lines.size());
 	for (size_t index = 0; index < document.lines.size(); ++index) {
 		const auto& line = document.lines[index];
-		const auto lyric_start_frame = StartFrameFromMilliseconds(line.start_time_ms, settings);
-		const auto lyric_end_frame = EndFrameFromMilliseconds(line.end_time_ms, settings);
+		const auto lyric_start_frame = StartFrameFromMilliseconds(line.start_time_ms, layout_settings);
+		const auto lyric_end_frame = EndFrameFromMilliseconds(line.end_time_ms, layout_settings);
 		const auto display_start_frame = std::max(0, lyric_start_frame - lead_in_frames);
 		const auto display_end_frame = std::max(display_start_frame, lyric_end_frame + hold_frames);
-		const auto text_element_bounds = BuildAdjustedTextElementBounds(line, settings, &text_measurer);
+		const auto text_element_bounds = BuildAdjustedTextElementBounds(line, layout_settings, &text_measurer);
 		const auto text_width = text_element_bounds.empty()
 			? 0
 			: static_cast<int>(std::lround(text_element_bounds.back().end));
-		auto syllables = BuildSyllableLayouts(line, settings, text_element_bounds);
+		auto syllables = BuildSyllableLayouts(line, layout_settings, text_element_bounds);
 
 		timing_lines.push_back(TimingLine{
 			static_cast<int>(index),
@@ -1015,7 +1024,8 @@ LayoutResult BuildLayout(const LyricsDocument& document, const ProjectSettings& 
 	std::vector<RowState> rows;
 
 	// 次に行配置とページ分けを決め、継続表示の整合を取る。
-	for (const auto& line : timing_lines) {
+	for (size_t timing_index = 0; timing_index < timing_lines.size(); ++timing_index) {
+		const auto& line = timing_lines[timing_index];
 		const auto placement = SchedulePlacement(&rows, line.display_start_frame, line.display_end_frame, min_gap_frames, settings.max_visible_lines);
 		provisional.push_back(ProvisionalLayoutLine{
 			line.index,
@@ -1028,7 +1038,7 @@ LayoutResult BuildLayout(const LyricsDocument& document, const ProjectSettings& 
 			line.text_width,
 			line.text_element_bounds,
 			line.syllables,
-			page_ids[line.index] });
+			page_ids[timing_index] });
 	}
 
 	provisional = ResolvePageContinuity(provisional, settings.max_visible_lines, min_gap_frames);
@@ -1046,12 +1056,12 @@ LayoutResult BuildLayout(const LyricsDocument& document, const ProjectSettings& 
 			- settings.bottom_margin
 			- settings.font.size
 			- (line.row_index * (settings.font.size + settings.line_spacing));
-		auto ruby = BuildRubyLayout(line, settings, &text_measurer);
+		auto ruby = BuildRubyLayout(line, layout_settings, &text_measurer);
 		if (ruby.has_value()) {
 			ruby->y = y - settings.ruby_font.size - settings.ruby_gap;
 		}
 
-		result.lines.push_back(LayoutLine{
+		auto layout_line = LayoutLine{
 			line.index,
 			line.source,
 			line.row_index,
@@ -1064,7 +1074,21 @@ LayoutResult BuildLayout(const LyricsDocument& document, const ProjectSettings& 
 			line.text_width,
 			line.text_element_bounds,
 			line.syllables,
-			ruby });
+			ruby };
+		if (settings.start_frame != 0) {
+			const auto frame_offset = -settings.start_frame;
+			layout_line.display_start_frame += frame_offset;
+			layout_line.display_end_frame += frame_offset;
+			layout_line.lyric_start_frame += frame_offset;
+			layout_line.lyric_end_frame += frame_offset;
+			ShiftSyllableFrames(&layout_line.syllables, frame_offset);
+			if (layout_line.ruby.has_value()) {
+				for (auto& segment : layout_line.ruby->segments) {
+					ShiftSyllableFrames(&segment.timing_segments, frame_offset);
+				}
+			}
+		}
+		result.lines.push_back(std::move(layout_line));
 	}
 
 	return result;
