@@ -13,7 +13,7 @@ body:
     attributes:
       label: 解決したい課題
       description: 現状どのような不便さや不足があるかを書いてください。
-      placeholder: 例: 長い歌詞行を表示すると画面端で見切れて調整が難しい
+      placeholder: "例: 長い歌詞行を表示すると画面端で見切れて調整が難しい"
     validations:
       required: true
   - type: textarea
@@ -21,7 +21,7 @@ body:
     attributes:
       label: 提案内容
       description: 欲しい機能や改善案を具体的に書いてください。
-      placeholder: 例: 自動改行または行ごとの縮小表示オプションを追加したい
+      placeholder: "例: 自動改行または行ごとの縮小表示オプションを追加したい"
     validations:
       required: true
   - type: textarea
@@ -29,7 +29,7 @@ body:
     attributes:
       label: 想定ユースケース
       description: どのような場面で使いたいかを書いてください。
-      placeholder: 例: 1 行の文字数が多いアニソンやラップ歌詞を字幕風に表示したい
+      placeholder: "例: 1 行の文字数が多いアニソンやラップ歌詞を字幕風に表示したい"
     validations:
       required: true
   - type: textarea
@@ -37,7 +37,7 @@ body:
     attributes:
       label: 代替案・回避策
       description: 現在使っている回避策や、検討した別案があれば書いてください。
-      placeholder: 例: 文字サイズを下げるとルビとのバランスが崩れるため運用で吸収しづらい
+      placeholder: "例: 文字サイズを下げるとルビとのバランスが崩れるため運用で吸収しづらい"
   - type: textarea
     id: additional
     attributes:

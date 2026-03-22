@@ -13,7 +13,7 @@ body:
     attributes:
       label: 概要
       description: 何が起きたのかを簡潔に書いてください。
-      placeholder: 例: ルビ付き歌詞ファイルを読み込むと AviUtl2 がクラッシュする
+      placeholder: "例: ルビ付き歌詞ファイルを読み込むと AviUtl2 がクラッシュする"
     validations:
       required: true
   - type: textarea
@@ -33,7 +33,7 @@ body:
     attributes:
       label: 期待した動作
       description: 本来どうなるべきだったかを書いてください。
-      placeholder: 例: ルビ付き歌詞が正常に表示される
+      placeholder: "例: ルビ付き歌詞が正常に表示される"
     validations:
       required: true
   - type: textarea
@@ -41,7 +41,7 @@ body:
     attributes:
       label: 実際の動作
       description: 実際に起きたこと、エラーメッセージ、クラッシュ有無などを書いてください。
-      placeholder: 例: ファイル選択直後に AviUtl2 が終了する。エラーダイアログは表示されない
+      placeholder: "例: ファイル選択直後に AviUtl2 が終了する。エラーダイアログは表示されない"
     validations:
       required: true
   - type: input
@@ -49,7 +49,7 @@ body:
     attributes:
       label: プラグインのバージョン
       description: 使用したリリース版やコミットを記入してください。
-      placeholder: 例: v1.1.0 / 1a2b3c4
+      placeholder: "例: v1.1.0 / 1a2b3c4"
     validations:
       required: true
   - type: input
@@ -57,7 +57,7 @@ body:
     attributes:
       label: AviUtl2 のバージョン
       description: AviUtl2 本体のバージョンを記入してください。
-      placeholder: 例: beta38a
+      placeholder: "例: beta38a"
     validations:
       required: true
   - type: input
@@ -65,7 +65,7 @@ body:
     attributes:
       label: OS
       description: 使用している OS を記入してください。
-      placeholder: 例: Windows 11 24H2
+      placeholder: "例: Windows 11 24H2"
     validations:
       required: true
   - type: textarea
@@ -73,7 +73,7 @@ body:
     attributes:
       label: 歌詞ファイル情報
       description: 拡張子、文字コード、問題箇所の抜粋などがあれば記入してください。機密情報は除いてください。
-      placeholder: 例: sample.lrc / UTF-8 / @Ruby を含む行で発生
+      placeholder: "例: sample.lrc / UTF-8 / @Ruby を含む行で発生"
   - type: textarea
     id: additional
     attributes:
