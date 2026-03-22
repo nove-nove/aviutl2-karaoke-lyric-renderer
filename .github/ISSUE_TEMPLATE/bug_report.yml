@@ -1,0 +1,81 @@
+name: Bug Report
+description: 不具合の報告
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        不具合報告ありがとうございます。再現に必要な情報をできるだけ具体的に記入してください。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+      description: 何が起きたのかを簡潔に書いてください。
+      placeholder: 例: ルビ付き歌詞ファイルを読み込むと AviUtl2 がクラッシュする
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      description: できるだけ具体的な手順を書いてください。
+      placeholder: |
+        1. AviUtl2 を起動する
+        2. カスタムオブジェクトから本プラグインを追加する
+        3. 〇〇の歌詞ファイルを選択する
+        4. 〇〇すると異常が発生する
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した動作
+      description: 本来どうなるべきだったかを書いてください。
+      placeholder: 例: ルビ付き歌詞が正常に表示される
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の動作
+      description: 実際に起きたこと、エラーメッセージ、クラッシュ有無などを書いてください。
+      placeholder: 例: ファイル選択直後に AviUtl2 が終了する。エラーダイアログは表示されない
+    validations:
+      required: true
+  - type: input
+    id: plugin_version
+    attributes:
+      label: プラグインのバージョン
+      description: 使用したリリース版やコミットを記入してください。
+      placeholder: 例: v1.1.0 / 1a2b3c4
+    validations:
+      required: true
+  - type: input
+    id: aviutl2_version
+    attributes:
+      label: AviUtl2 のバージョン
+      description: AviUtl2 本体のバージョンを記入してください。
+      placeholder: 例: beta38a
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      description: 使用している OS を記入してください。
+      placeholder: 例: Windows 11 24H2
+    validations:
+      required: true
+  - type: textarea
+    id: lyric_sample
+    attributes:
+      label: 歌詞ファイル情報
+      description: 拡張子、文字コード、問題箇所の抜粋などがあれば記入してください。機密情報は除いてください。
+      placeholder: 例: sample.lrc / UTF-8 / @Ruby を含む行で発生
+  - type: textarea
+    id: additional
+    attributes:
+      label: 補足情報
+      description: スクリーンショット、関連ログ、追加の状況があれば記入してください。

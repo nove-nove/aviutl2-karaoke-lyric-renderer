@@ -1,0 +1,45 @@
+name: Feature Request
+description: 機能追加・改善提案
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提案ありがとうございます。解決したい課題と期待する使い方が分かるように記入してください。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したい課題
+      description: 現状どのような不便さや不足があるかを書いてください。
+      placeholder: 例: 長い歌詞行を表示すると画面端で見切れて調整が難しい
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案内容
+      description: 欲しい機能や改善案を具体的に書いてください。
+      placeholder: 例: 自動改行または行ごとの縮小表示オプションを追加したい
+    validations:
+      required: true
+  - type: textarea
+    id: use_case
+    attributes:
+      label: 想定ユースケース
+      description: どのような場面で使いたいかを書いてください。
+      placeholder: 例: 1 行の文字数が多いアニソンやラップ歌詞を字幕風に表示したい
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 代替案・回避策
+      description: 現在使っている回避策や、検討した別案があれば書いてください。
+      placeholder: 例: 文字サイズを下げるとルビとのバランスが崩れるため運用で吸収しづらい
+  - type: textarea
+    id: additional
+    attributes:
+      label: 補足情報
+      description: モック、参考例、関連 Issue があれば記入してください。
