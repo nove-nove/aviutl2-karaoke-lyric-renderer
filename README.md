@@ -10,6 +10,10 @@
 
 ## 使い方
 
+`AviUtl2カタログ` を導入済みであれば、[こちらのリンク](aviutl2-catalog://package/novenove.KaraokeLyricRenderer) からカタログ経由でインストールできます。
+
+通常の導入手順は以下のとおりです。
+
 1. [最新版の zip をダウンロード](https://github.com/nove-nove/aviutl2-karaoke-lyric-renderer/releases/latest/download/aviutl2-karaoke-lyric-renderer.zip) します。
 2. zip を解凍して `AviUtl2KaraokeLyricRenderer.auf2` を取り出します。
 3. `AviUtl2KaraokeLyricRenderer.auf2` を AviUtl2 のプラグインフォルダへコピーするか、AviUtl2 のプレビュー画面へドラッグアンドドロップして既定のフォルダへインストールします。
