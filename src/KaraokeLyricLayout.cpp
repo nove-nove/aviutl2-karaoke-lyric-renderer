@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 
 using namespace Gdiplus;
@@ -765,6 +766,106 @@ bool IsIsolated(const ProvisionalLayoutLine& line, const std::vector<Provisional
 	return true;
 }
 
+// 行の状態と設定から横方向配置を決める。
+HorizontalAlignment ResolveLineAlignment(const ProvisionalLayoutLine& line, const std::vector<ProvisionalLayoutLine>& all_lines, const ProjectSettings& settings) {
+	const auto isolated = IsIsolated(line, all_lines);
+	if (!settings.use_custom_line_alignments) {
+		return isolated ? HorizontalAlignment::Center : HorizontalAlignment::Left;
+	}
+
+	if (settings.always_center_single_line && isolated) {
+		return HorizontalAlignment::Center;
+	}
+
+	const auto row_index = std::clamp(line.row_index, 0, static_cast<int>(settings.line_alignments.size() - 1));
+	return settings.line_alignments[static_cast<size_t>(row_index)];
+}
+
+// 左右揃えの種別に応じて本文の左端X座標を返す。
+float ComputeAlignedLineX(const ProvisionalLayoutLine& line, const ProjectSettings& settings, HorizontalAlignment alignment) {
+	switch (alignment) {
+	case HorizontalAlignment::Center:
+		return -line.text_width / 2.0f;
+	case HorizontalAlignment::Right:
+		return (settings.video_width / 2.0f) - settings.side_margin - line.text_width;
+	case HorizontalAlignment::Left:
+	default:
+		return (-settings.video_width / 2.0f) + settings.side_margin;
+	}
+}
+
+// ぶら下げ基準に使う上段行を返す。
+const ProvisionalLayoutLine* FindUpperReferenceLine(const ProvisionalLayoutLine& line, const std::vector<ProvisionalLayoutLine>& all_lines) {
+	const auto target_row_index = line.row_index + 1;
+	const ProvisionalLayoutLine* active_at_start = nullptr;
+	int active_at_start_frame = std::numeric_limits<int>::min();
+	const ProvisionalLayoutLine* best_overlap = nullptr;
+	int best_overlap_duration = -1;
+
+	for (const auto& candidate : all_lines) {
+		if (candidate.index == line.index || candidate.page_id != line.page_id || candidate.row_index != target_row_index) {
+			continue;
+		}
+
+		if (!IntervalsOverlap(line.display_start_frame, line.display_end_frame, candidate.display_start_frame, candidate.display_end_frame)) {
+			continue;
+		}
+
+		if (candidate.display_start_frame <= line.display_start_frame && line.display_start_frame < candidate.display_end_frame) {
+			if (!active_at_start || candidate.display_start_frame > active_at_start_frame) {
+				active_at_start = &candidate;
+				active_at_start_frame = candidate.display_start_frame;
+			}
+		}
+
+		const auto overlap_start = std::max(line.display_start_frame, candidate.display_start_frame);
+		const auto overlap_end = std::min(line.display_end_frame, candidate.display_end_frame);
+		const auto overlap_duration = overlap_end - overlap_start;
+		if (!best_overlap || overlap_duration > best_overlap_duration) {
+			best_overlap = &candidate;
+			best_overlap_duration = overlap_duration;
+		}
+	}
+
+	return active_at_start ? active_at_start : best_overlap;
+}
+
+// 上段ぶら下げも含めて本文の左端X座標を解決する。
+float ResolveLineX(
+	const ProvisionalLayoutLine& line,
+	const std::vector<ProvisionalLayoutLine>& all_lines,
+	const ProjectSettings& settings,
+	std::unordered_map<int, float>* resolved_x,
+	std::set<int>* resolving) {
+	const auto found = resolved_x->find(line.index);
+	if (found != resolved_x->end()) {
+		return found->second;
+	}
+
+	const auto alignment = ResolveLineAlignment(line, all_lines, settings);
+	if (alignment != HorizontalAlignment::HangingFromUpper) {
+		const auto x = ComputeAlignedLineX(line, settings, alignment);
+		(*resolved_x)[line.index] = x;
+		return x;
+	}
+
+	if (!resolving->insert(line.index).second) {
+		const auto fallback = ComputeAlignedLineX(line, settings, HorizontalAlignment::Left);
+		(*resolved_x)[line.index] = fallback;
+		return fallback;
+	}
+
+	const auto* reference = FindUpperReferenceLine(line, all_lines);
+	float x = ComputeAlignedLineX(line, settings, HorizontalAlignment::Left);
+	if (reference) {
+		x = ResolveLineX(*reference, all_lines, settings, resolved_x, resolving) + settings.hanging_indent;
+	}
+
+	resolving->erase(line.index);
+	(*resolved_x)[line.index] = x;
+	return x;
+}
+
 // 本文の文字位置を基準にルビの描画位置を組み立てる。
 std::vector<LayoutSyllable> BuildRubyTimingLayouts(
 	const RubySpan& ruby_span,
@@ -1046,12 +1147,11 @@ LayoutResult BuildLayout(const LyricsDocument& document, const ProjectSettings& 
 
 	LayoutResult result;
 	result.lines.reserve(provisional.size());
+	std::unordered_map<int, float> resolved_x;
+	std::set<int> resolving;
 	// 最後に画面座標とルビ位置を確定して描画用データへ落とし込む。
 	for (const auto& line : provisional) {
-		const auto isolated = IsIsolated(line, provisional);
-		const auto x = isolated
-			? -line.text_width / 2.0f
-			: (-settings.video_width / 2.0f) + settings.side_margin;
+		const auto x = ResolveLineX(line, provisional, settings, &resolved_x, &resolving);
 		const auto y = (settings.video_height / 2.0f)
 			- settings.bottom_margin
 			- settings.font.size

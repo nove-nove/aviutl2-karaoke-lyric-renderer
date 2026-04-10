@@ -9,6 +9,7 @@
 #include <optional>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 #pragma comment(lib, "gdiplus.lib")
 
@@ -44,6 +45,14 @@ FILTER_ITEM_SELECT::ITEM kOutlineModeItems[] = {
 	{ nullptr, 0 },
 };
 
+FILTER_ITEM_SELECT::ITEM kAlignmentItems[] = {
+	{ L"左揃え", static_cast<int>(HorizontalAlignment::Left) },
+	{ L"中央揃え", static_cast<int>(HorizontalAlignment::Center) },
+	{ L"右揃え", static_cast<int>(HorizontalAlignment::Right) },
+	{ L"上段からぶら下げ", static_cast<int>(HorizontalAlignment::HangingFromUpper) },
+	{ nullptr, 0 },
+};
+
 // AviUtl2に公開するフィルタUI項目。
 FILTER_ITEM_FILE kLyricsFile(
 	L"歌詞ファイル",
@@ -74,6 +83,15 @@ FILTER_ITEM_COLOR kAfterEdgeColor(L"ワイプ後縁色", 0xffffff);
 FILTER_ITEM_CHECK kBold(L"太字", false);
 FILTER_ITEM_CHECK kItalic(L"斜体", false);
 FILTER_ITEM_CHECK kShowRuby(L"ルビ表示", true);
+FILTER_ITEM_GROUP kCustomLineAlignmentGroup(L"カスタム配置");
+FILTER_ITEM_CHECK kUseCustomLineAlignments(L"歌詞の配置をカスタムする", false);
+FILTER_ITEM_SELECT kLineAlignmentFourthFromBottom(L"下から4段目", static_cast<int>(HorizontalAlignment::Left), kAlignmentItems);
+FILTER_ITEM_SELECT kLineAlignmentThirdFromBottom(L"下から3段目", static_cast<int>(HorizontalAlignment::Left), kAlignmentItems);
+FILTER_ITEM_SELECT kLineAlignmentSecondFromBottom(L"下から2段目", static_cast<int>(HorizontalAlignment::Left), kAlignmentItems);
+FILTER_ITEM_SELECT kLineAlignmentBottom(L"下から1段目", static_cast<int>(HorizontalAlignment::Left), kAlignmentItems);
+FILTER_ITEM_TRACK kHangingIndent(L"ぶら下げ幅", 0, 0, 512);
+FILTER_ITEM_CHECK kAlwaysCenterSingleLine(L"1段表示時は常に中央揃え", true);
+FILTER_ITEM_GROUP kCustomLineAlignmentGroupEnd(L"");
 
 void* kItems[] = {
 	&kLyricsFile,
@@ -98,6 +116,15 @@ void* kItems[] = {
 	&kBold,
 	&kItalic,
 	&kShowRuby,
+	&kCustomLineAlignmentGroup,
+	&kUseCustomLineAlignments,
+	&kLineAlignmentFourthFromBottom,
+	&kLineAlignmentThirdFromBottom,
+	&kLineAlignmentSecondFromBottom,
+	&kLineAlignmentBottom,
+	&kHangingIndent,
+	&kAlwaysCenterSingleLine,
+	&kCustomLineAlignmentGroupEnd,
 	nullptr,
 };
 
@@ -128,6 +155,7 @@ struct FrameScratchBuffers {
 
 std::mutex g_cache_mutex;
 std::unordered_map<std::wstring, std::shared_ptr<CachedLayout>> g_layout_cache;
+std::unordered_set<std::wstring> g_reported_overflow_keys;
 
 // 警告ログを出力する。
 void LogWarn(const wchar_t* message) {
@@ -142,6 +170,9 @@ void LogError(const wchar_t* message) {
 		g_logger->error(g_logger, message);
 	}
 }
+
+// フォントサイズと設定から縁取り幅を決める。
+float ComputeOutlineWidth(const FontStyleSettings& font);
 
 // 現在選択中のフォント名を返す。
 const wchar_t* GetSelectedFontName() {
@@ -230,6 +261,15 @@ ProjectSettings BuildProjectSettings(const FILTER_PROC_VIDEO* video) {
 	settings.hold_ms = static_cast<int>(std::lround(kHoldMs.value));
 	settings.min_gap_ms = static_cast<int>(std::lround(kMinGapMs.value));
 	settings.max_visible_lines = std::clamp(static_cast<int>(std::lround(kVisibleLines.value)), 1, 4);
+	settings.use_custom_line_alignments = kUseCustomLineAlignments.value;
+	settings.line_alignments = {
+		static_cast<HorizontalAlignment>(kLineAlignmentBottom.value),
+		static_cast<HorizontalAlignment>(kLineAlignmentSecondFromBottom.value),
+		static_cast<HorizontalAlignment>(kLineAlignmentThirdFromBottom.value),
+		static_cast<HorizontalAlignment>(kLineAlignmentFourthFromBottom.value),
+	};
+	settings.always_center_single_line = kAlwaysCenterSingleLine.value;
+	settings.hanging_indent = static_cast<int>(std::lround(kHangingIndent.value));
 
 	const auto font_name = GetSelectedFontName();
 	const auto font_size = static_cast<float>(std::max(8.0, kFontSize.value));
@@ -260,6 +300,13 @@ std::wstring BuildCacheKey(const wchar_t* file_path, const FileMetadata& metadat
 		<< settings.hold_ms << L'|'
 		<< settings.min_gap_ms << L'|'
 		<< settings.max_visible_lines << L'|'
+		<< settings.use_custom_line_alignments << L'|'
+		<< static_cast<int>(settings.line_alignments[0]) << L'|'
+		<< static_cast<int>(settings.line_alignments[1]) << L'|'
+		<< static_cast<int>(settings.line_alignments[2]) << L'|'
+		<< static_cast<int>(settings.line_alignments[3]) << L'|'
+		<< settings.always_center_single_line << L'|'
+		<< settings.hanging_indent << L'|'
 		<< settings.font.name << L'|'
 		<< settings.font.size << L'|'
 		<< settings.font.letter_spacing << L'|'
@@ -267,6 +314,122 @@ std::wstring BuildCacheKey(const wchar_t* file_path, const FileMetadata& metadat
 		<< settings.font.italic << L'|'
 		<< settings.ruby_font.size;
 	return stream.str();
+}
+
+// WARN 用にレイアウト検証条件のキーを組み立てる。
+std::wstring BuildOverflowCheckKey(const std::wstring& base_cache_key, bool show_ruby, int outline_mode) {
+	std::wostringstream stream;
+	stream << base_cache_key << L"|warn|" << show_ruby << L'|' << outline_mode;
+	return stream.str();
+}
+
+// ログ出力向けに行文字列を1行へ正規化する。
+std::wstring NormalizeLineForLog(const std::wstring& line) {
+	std::wstring normalized;
+	normalized.reserve(line.size());
+	for (const auto ch : line) {
+		normalized.push_back((ch == L'\r' || ch == L'\n' || ch == L'\t') ? L' ' : ch);
+	}
+	return normalized;
+}
+
+// WARN 表示向けに、行頭の最初のタイムタグだけ残して以降のタイムタグを除去する。
+std::wstring FormatLyricLineForWarnLog(const std::wstring& line) {
+	auto try_read_time_tag = [&line](size_t index, size_t* next_index) -> bool {
+		if (index + 10 > line.size()) {
+			return false;
+		}
+
+		if (line[index] != L'[' || line[index + 3] != L':' || line[index + 6] != L':' || line[index + 9] != L']') {
+			return false;
+		}
+
+		for (size_t i = 1; i < 9; ++i) {
+			if (i == 3 || i == 6) {
+				continue;
+			}
+
+			if (line[index + i] < L'0' || line[index + i] > L'9') {
+				return false;
+			}
+		}
+
+		if (next_index) {
+			*next_index = index + 10;
+		}
+		return true;
+	};
+
+	std::wstring result;
+	result.reserve(line.size());
+
+	size_t index = 0;
+	size_t next_index = 0;
+	if (try_read_time_tag(0, &next_index)) {
+		result.append(line, 0, next_index);
+		index = next_index;
+	}
+
+	while (index < line.size()) {
+		if (try_read_time_tag(index, &next_index)) {
+			index = next_index;
+			continue;
+		}
+
+		result.push_back(line[index]);
+		++index;
+	}
+
+	return NormalizeLineForLog(result);
+}
+
+// 現在設定で歌詞が画面内へ収まるか検証し、はみ出した行を警告する。
+void WarnIfLayoutOverflowsFrame(const LayoutResult& layout, const ProjectSettings& settings, bool show_ruby) {
+	const auto text_padding = ComputeOutlineWidth(settings.font) * 0.5f;
+	const auto ruby_padding = show_ruby ? ComputeOutlineWidth(settings.ruby_font) * 0.5f : 0.0f;
+
+	for (const auto& line : layout.lines) {
+		float left = (settings.video_width / 2.0f) + line.x - text_padding;
+		float right = left + line.text_width + (text_padding * 2.0f);
+		float top = (settings.video_height / 2.0f) + line.y - text_padding;
+		float bottom = top + settings.font.size + (text_padding * 2.0f);
+
+		if (show_ruby && line.ruby.has_value()) {
+			top = std::min(top, (settings.video_height / 2.0f) + line.ruby->y - ruby_padding);
+			for (const auto& segment : line.ruby->segments) {
+				const auto ruby_left = (settings.video_width / 2.0f) + line.x + segment.offset_x - ruby_padding;
+				const auto ruby_right = ruby_left + segment.width + (ruby_padding * 2.0f);
+				left = std::min(left, ruby_left);
+				right = std::max(right, ruby_right);
+			}
+		}
+
+		if (left >= 0.0f && right <= settings.video_width && top >= 0.0f && bottom <= settings.video_height) {
+			continue;
+		}
+
+		std::wstring overflow;
+		if (left < 0.0f) {
+			overflow += L"left ";
+		}
+		if (right > settings.video_width) {
+			overflow += L"right ";
+		}
+		if (top < 0.0f) {
+			overflow += L"top ";
+		}
+		if (bottom > settings.video_height) {
+			overflow += L"bottom ";
+		}
+
+		const auto line_text = FormatLyricLineForWarnLog(line.source.raw_line.empty() ? line.source.text : line.source.raw_line);
+		std::wostringstream message;
+		message
+			<< L"Lyrics overflow at line " << (line.index + 1)
+			<< L" [" << overflow << L"]: "
+			<< line_text;
+		LogWarn(message.str().c_str());
+	}
 }
 
 // 歌詞ファイルを読み込み、必要なら解析済みレイアウトを再構築する。
@@ -288,11 +451,15 @@ std::shared_ptr<CachedLayout> GetOrBuildLayout(const FILTER_PROC_VIDEO* video) {
 
 	const auto settings = BuildProjectSettings(video);
 	const auto cache_key = BuildCacheKey(file_path, metadata.value(), settings);
+	const auto overflow_check_key = BuildOverflowCheckKey(cache_key, kShowRuby.value, kOutlineMode.value);
 	{
 		// 入力ファイルと描画条件が同じ間は前回結果を再利用する。
 		const std::scoped_lock lock(g_cache_mutex);
 		const auto found = g_layout_cache.find(cache_key);
 		if (found != g_layout_cache.end()) {
+			if (g_reported_overflow_keys.insert(overflow_check_key).second) {
+				WarnIfLayoutOverflowsFrame(found->second->layout, settings, kShowRuby.value);
+			}
 			return found->second;
 		}
 	}
@@ -315,6 +482,9 @@ std::shared_ptr<CachedLayout> GetOrBuildLayout(const FILTER_PROC_VIDEO* video) {
 
 	const std::scoped_lock lock(g_cache_mutex);
 	g_layout_cache[cache_key] = cache_entry;
+	if (g_reported_overflow_keys.insert(overflow_check_key).second) {
+		WarnIfLayoutOverflowsFrame(cache_entry->layout, settings, kShowRuby.value);
+	}
 	return cache_entry;
 }
 

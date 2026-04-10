@@ -5,6 +5,7 @@
 #include <gdiplus.h>
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -68,6 +69,14 @@ struct FontStyleSettings {
 // 斜体クリップとルビ補正で共有する shear 量。
 inline constexpr float kItalicShear = 0.25f;
 
+// 歌詞行の横方向配置。
+enum class HorizontalAlignment {
+	Left = 0,
+	Center = 1,
+	Right = 2,
+	HangingFromUpper = 3,
+};
+
 // レイアウト計算に必要なプロジェクト設定。
 struct ProjectSettings {
 	int video_width = 1280;
@@ -83,6 +92,15 @@ struct ProjectSettings {
 	int hold_ms = 250;
 	int min_gap_ms = 200;
 	int max_visible_lines = 2;
+	bool use_custom_line_alignments = false;
+	std::array<HorizontalAlignment, 4> line_alignments = {
+		HorizontalAlignment::Left,
+		HorizontalAlignment::Left,
+		HorizontalAlignment::Left,
+		HorizontalAlignment::Left,
+	};
+	bool always_center_single_line = true;
+	int hanging_indent = 0;
 	FontStyleSettings font;
 	FontStyleSettings ruby_font;
 
